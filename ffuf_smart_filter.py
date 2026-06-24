@@ -92,6 +92,14 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help="Optional TSV report of fingerprint counts, sorted by frequency.",
     )
     parser.add_argument(
+        "--show-count",
+        type=int,
+        help=(
+            "Only write rows whose fingerprint appears exactly this many times. "
+            "This mode stores valid rows in memory."
+        ),
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="Do not print summary statistics to stderr.",
@@ -104,6 +112,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
     if args.first < 1:
         parser.error("--first must be at least 1")
+    if args.show_count is not None and args.show_count < 1:
+        parser.error("--show-count must be at least 1")
 
     return args
 
@@ -176,6 +186,67 @@ def validate_key_fields(columns: Sequence[str], key_fields: Iterable[str]) -> No
         )
 
 
+def show_patterns_with_count(
+    input_file: TextIO,
+    output_file: TextIO,
+    *,
+    columns: Sequence[str],
+    key_fields: Sequence[str],
+    exact_count: int,
+    has_header: bool,
+    write_header: bool,
+) -> tuple[FilterStats, Counter[tuple[str, ...]]]:
+    reader = csv.reader(input_file, delimiter="\t")
+    writer = csv.writer(output_file, delimiter="\t", lineterminator="\n")
+
+    header = list(columns)
+    if has_header:
+        try:
+            header = next(reader)
+        except StopIteration:
+            if write_header:
+                writer.writerow(header)
+            return FilterStats(0, 0, 0, 0, 0), Counter()
+
+    validate_key_fields(header, key_fields)
+
+    key_indexes = [header.index(field) for field in key_fields]
+    rows_by_pattern: dict[tuple[str, ...], list[list[str]]] = {}
+    pattern_counts: Counter[tuple[str, ...]] = Counter()
+    total_rows = 0
+    malformed_rows = 0
+
+    for row in reader:
+        total_rows += 1
+        if len(row) != len(header):
+            malformed_rows += 1
+            continue
+
+        key = tuple(row[index] for index in key_indexes)
+        pattern_counts[key] += 1
+        rows_by_pattern.setdefault(key, []).append(row)
+
+    if write_header:
+        writer.writerow(header)
+
+    kept_rows = 0
+    for key, rows in rows_by_pattern.items():
+        if pattern_counts[key] == exact_count:
+            writer.writerows(rows)
+            kept_rows += len(rows)
+
+    return (
+        FilterStats(
+            total_rows=total_rows,
+            kept_rows=kept_rows,
+            suppressed_rows=total_rows - kept_rows - malformed_rows,
+            malformed_rows=malformed_rows,
+            unique_patterns=len(pattern_counts),
+        ),
+        pattern_counts,
+    )
+
+
 def write_pattern_report(path: Path, pattern_counts: Counter[tuple[str, ...]], key_fields: Sequence[str]) -> None:
     with path.open("w", newline="", encoding="utf-8") as report:
         writer = csv.writer(report, delimiter="\t", lineterminator="\n")
@@ -222,15 +293,26 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         with input_context as input_file, output_context as output_file:
-            stats, pattern_counts = smart_filter(
-                input_file,
-                output_file,
-                columns=columns,
-                key_fields=key_fields,
-                keep_first=args.first,
-                has_header=args.header,
-                write_header=args.write_header,
-            )
+            if args.show_count is None:
+                stats, pattern_counts = smart_filter(
+                    input_file,
+                    output_file,
+                    columns=columns,
+                    key_fields=key_fields,
+                    keep_first=args.first,
+                    has_header=args.header,
+                    write_header=args.write_header,
+                )
+            else:
+                stats, pattern_counts = show_patterns_with_count(
+                    input_file,
+                    output_file,
+                    columns=columns,
+                    key_fields=key_fields,
+                    exact_count=args.show_count,
+                    has_header=args.header,
+                    write_header=args.write_header,
+                )
     except BrokenPipeError:
         return 0
 
