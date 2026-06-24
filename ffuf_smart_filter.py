@@ -96,6 +96,10 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         action="store_true",
         help="Do not print summary statistics to stderr.",
     )
+    if not argv:
+        parser.print_help()
+        raise SystemExit(0)
+
     args = parser.parse_args(argv)
 
     if args.first < 1:
