@@ -18,6 +18,12 @@ without drowning in duplicates.
 
 ## Usage
 
+Run without arguments to print the help/usage text:
+
+```bash
+python3 ffuf_smart_filter.py
+```
+
 ```bash
 python3 ffuf_smart_filter.py results.tsv -o filtered.tsv
 ```
@@ -32,6 +38,12 @@ Read from stdin and write to stdout:
 
 ```bash
 cat results.tsv | python3 ffuf_smart_filter.py - > filtered.tsv
+```
+
+When `-o` is not provided, matching rows are written to stdout:
+
+```bash
+python3 ffuf_smart_filter.py results.tsv --quiet > filtered.tsv
 ```
 
 Treat the first input row as a header and write it back out:
@@ -52,6 +64,18 @@ Write a report of repeated fingerprints:
 python3 ffuf_smart_filter.py results.tsv \
   -o filtered.tsv \
   --pattern-report patterns.tsv
+```
+
+Print rows whose fingerprint appears exactly 5 times:
+
+```bash
+python3 ffuf_smart_filter.py results.tsv --show-count 5 -o count-5.tsv
+```
+
+Print those rows to stdout instead:
+
+```bash
+python3 ffuf_smart_filter.py results.tsv --show-count 5 --quiet
 ```
 
 ## Input Format
@@ -78,6 +102,42 @@ python3 ffuf_smart_filter.py results.tsv \
   -o filtered.tsv
 ```
 
+## Counting Matches
+
+`--show-count X` prints rows whose fingerprint appears exactly `X` times.
+
+By default, counts are per host because the default fingerprint includes
+`host`:
+
+```text
+host + status + length + words + lines
+```
+
+That means these two rows count together:
+
+```text
+a.com    200    1234    50    10    https://a.com/admin
+a.com    200    1234    50    10    https://a.com/login
+```
+
+But this row is counted separately because the host differs:
+
+```text
+b.com    200    1234    50    10    https://b.com/admin
+```
+
+Use `--global-key` to count matching response shapes across all hosts:
+
+```bash
+python3 ffuf_smart_filter.py results.tsv --show-count 5 --global-key
+```
+
+In global mode, the default fingerprint becomes:
+
+```text
+status + length + words + lines
+```
+
 ## Output
 
 Filtered rows are written as TSV. Summary statistics are printed to stderr:
@@ -87,3 +147,7 @@ rows=10000 kept=240 suppressed=9760 malformed=0 patterns=24
 ```
 
 Use `--quiet` to suppress the summary.
+
+When `--show-count` is used, the tool switches from first-N filtering to exact
+count matching. It stores valid rows in memory so it can count all fingerprints
+before writing the matching rows.
